@@ -245,6 +245,8 @@ var optab = []Optab{
 	{AMOVBZ, C_ADDR, C_NONE, C_NONE, C_REG, 75, 8, 0},
 	{AMOVB, C_ADDR, C_NONE, C_NONE, C_REG, 76, 12, 0},
 
+	{AMOVD, C_TLS_LE, C_NONE, C_NONE, C_REG, 79, 4, 0},
+
 	/* load constant */
 	{AMOVD, C_SECON, C_NONE, C_NONE, C_REG, 3, 4, REGSB},
 	{AMOVD, C_SACON, C_NONE, C_NONE, C_REG, 3, 4, REGSP},
@@ -583,6 +585,9 @@ func aclass(ctxt *obj.Link, a *obj.Addr) int {
 			}
 			ctxt.Instoffset = a.Offset
 			if a.Sym != nil { // use relocation
+				if a.Sym.Type == obj.STLSBSS {
+					return C_TLS_LE
+				}
 				return C_ADDR
 			}
 			return C_LEXT
@@ -1372,13 +1377,13 @@ func oclass(a *obj.Addr) int {
 	return int(a.Class) - 1
 }
 
-// add R_ADDRPOWER relocation to symbol s for the two instructions o1 and o2.
-func addaddrreloc(ctxt *obj.Link, s *obj.LSym, o1 *uint32, o2 *uint32) {
+// add R_ADDRPOWER relocation to symbol s with addend d
+func addaddrreloc(ctxt *obj.Link, s *obj.LSym, d int64) {
 	rel := obj.Addrel(ctxt.Cursym)
 	rel.Off = int32(ctxt.Pc)
 	rel.Siz = 8
 	rel.Sym = s
-	rel.Add = int64(uint64(*o1)<<32 | uint64(uint32(*o2)))
+	rel.Add = d
 	rel.Type = obj.R_ADDRPOWER
 }
 
@@ -1805,9 +1810,9 @@ func asmout(ctxt *obj.Link, p *obj.Prog, o *Optab, out []uint32) {
 			o1 = loadu32(int(p.To.Reg), d)
 			o2 = LOP_IRR(OP_ORI, uint32(p.To.Reg), uint32(p.To.Reg), uint32(int32(d)))
 		} else {
-			o1 = AOP_IRR(OP_ADDIS, REGTMP, REGZERO, uint32(high16adjusted(int32(d))))
-			o2 = AOP_IRR(OP_ADDI, uint32(p.To.Reg), REGTMP, uint32(d))
-			addaddrreloc(ctxt, p.From.Sym, &o1, &o2)
+			o1 = AOP_IRR(OP_ADDIS, REGTMP, REGZERO, 0)
+			o2 = AOP_IRR(OP_ADDI, uint32(p.To.Reg), REGTMP, 0)
+			addaddrreloc(ctxt, p.From.Sym, d)
 		}
 
 	//if(dlm) reloc(&p->from, p->pc, 0);
@@ -2369,32 +2374,43 @@ func asmout(ctxt *obj.Link, p *obj.Prog, o *Optab, out []uint32) {
 		o1 = 0 /* "An instruction consisting entirely of binary 0s is guaranteed
 		   always to be an illegal instruction."  */
 
-		/* relocation operations */
+	/* relocation operations */
 	case 74:
-		v := regoff(ctxt, &p.To)
+		v := vregoff(ctxt, &p.To)
 
-		o1 = AOP_IRR(OP_ADDIS, REGTMP, REGZERO, uint32(high16adjusted(v)))
-		o2 = AOP_IRR(uint32(opstore(ctxt, int(p.As))), uint32(p.From.Reg), REGTMP, uint32(v))
-		addaddrreloc(ctxt, p.To.Sym, &o1, &o2)
+		o1 = AOP_IRR(OP_ADDIS, REGTMP, REGZERO, 0)
+		o2 = AOP_IRR(uint32(opstore(ctxt, int(p.As))), uint32(p.From.Reg), REGTMP, 0)
+		addaddrreloc(ctxt, p.To.Sym, v)
 
 	//if(dlm) reloc(&p->to, p->pc, 1);
 
 	case 75:
-		v := regoff(ctxt, &p.From)
-		o1 = AOP_IRR(OP_ADDIS, REGTMP, REGZERO, uint32(high16adjusted(v)))
-		o2 = AOP_IRR(uint32(opload(ctxt, int(p.As))), uint32(p.To.Reg), REGTMP, uint32(v))
-		addaddrreloc(ctxt, p.From.Sym, &o1, &o2)
+		v := vregoff(ctxt, &p.From)
+		o1 = AOP_IRR(OP_ADDIS, REGTMP, REGZERO, 0)
+		o2 = AOP_IRR(uint32(opload(ctxt, int(p.As))), uint32(p.To.Reg), REGTMP, 0)
+		addaddrreloc(ctxt, p.From.Sym, v)
 
 	//if(dlm) reloc(&p->from, p->pc, 1);
 
 	case 76:
-		v := regoff(ctxt, &p.From)
-		o1 = AOP_IRR(OP_ADDIS, REGTMP, REGZERO, uint32(high16adjusted(v)))
-		o2 = AOP_IRR(uint32(opload(ctxt, int(p.As))), uint32(p.To.Reg), REGTMP, uint32(v))
-		addaddrreloc(ctxt, p.From.Sym, &o1, &o2)
+		v := vregoff(ctxt, &p.From)
+		o1 = AOP_IRR(OP_ADDIS, REGTMP, REGZERO, 0)
+		o2 = AOP_IRR(uint32(opload(ctxt, int(p.As))), uint32(p.To.Reg), REGTMP, 0)
+		addaddrreloc(ctxt, p.From.Sym, v)
 		o3 = LOP_RRR(OP_EXTSB, uint32(p.To.Reg), uint32(p.To.Reg), 0)
 
 		//if(dlm) reloc(&p->from, p->pc, 1);
+
+	case 79:
+		if p.From.Offset != 0 {
+			ctxt.Diag("invalid offset against tls var %v", p)
+		}
+		o1 = AOP_IRR(OP_ADDI, uint32(p.To.Reg), REGZERO, 0)
+		rel := obj.Addrel(ctxt.Cursym)
+		rel.Off = int32(ctxt.Pc)
+		rel.Siz = 4
+		rel.Sym = p.From.Sym
+		rel.Type = obj.R_POWER_TLS_LE
 
 	}
 

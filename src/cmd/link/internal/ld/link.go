@@ -63,11 +63,11 @@ type LSym struct {
 	Got         int32
 	Align       int32
 	Elfsym      int32
+	LocalElfsym int32
 	Args        int32
 	Locals      int32
 	Value       int64
 	Size        int64
-	Hash        *LSym
 	Allsym      *LSym
 	Next        *LSym
 	Sub         *LSym
@@ -91,6 +91,16 @@ func (s *LSym) String() string {
 		return s.Name
 	}
 	return fmt.Sprintf("%s<%d>", s.Name, s.Version)
+}
+
+func (s *LSym) ElfsymForReloc() int32 {
+	// If putelfsym created a local version of this symbol, use that in all
+	// relocations.
+	if s.LocalElfsym != 0 {
+		return s.LocalElfsym
+	} else {
+		return s.Elfsym
+	}
 }
 
 type Reloc struct {

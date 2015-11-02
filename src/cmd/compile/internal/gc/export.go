@@ -72,7 +72,7 @@ func exportedsym(sym *Sym) bool {
 	return sym.Pkg == localpkg && exportname(sym.Name)
 }
 
-func autoexport(n *Node, ctxt uint8) {
+func autoexport(n *Node, ctxt Class) {
 	if n == nil || n.Sym == nil {
 		return
 	}
@@ -375,13 +375,9 @@ func dumpexport() {
 			if n, err := bout.Write(copy.Bytes()); n != size || err != nil {
 				Fatalf("error writing export data: got %d bytes, want %d bytes, err = %v", n, size, err)
 			}
-
-			// verify there's no "\n$$\n" inside the export data
-			// TODO(gri) fragile - the end marker needs to be fixed
-			// TODO(gri) investigate if exporting a string containing "\n$$\n"
-			//           causes problems (old and new format)
-			if bytes.Index(copy.Bytes(), []byte("\n$$\n")) >= 0 {
-				Fatalf("export data contains end marker in its midst")
+			// export data must contain no '$' so that we can find the end by searching for "$$"
+			if bytes.IndexByte(copy.Bytes(), '$') >= 0 {
+				Fatalf("export data contains $")
 			}
 
 			// verify that we can read the copied export data back in
@@ -438,8 +434,8 @@ func dumpexport() {
 // import
 
 // return the sym for ss, which should match lexical
-func importsym(s *Sym, op int) *Sym {
-	if s.Def != nil && int(s.Def.Op) != op {
+func importsym(s *Sym, op Op) *Sym {
+	if s.Def != nil && s.Def.Op != op {
 		pkgstr := fmt.Sprintf("during import %q", importpkg.Path)
 		redeclare(s, pkgstr)
 	}

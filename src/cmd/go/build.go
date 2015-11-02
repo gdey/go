@@ -350,7 +350,8 @@ func buildModeInit() {
 			codegenArg = "-fPIC"
 		} else {
 			switch platform {
-			case "linux/amd64", "linux/arm", "android/arm":
+			case "linux/amd64", "linux/arm", "linux/arm64",
+				"android/amd64", "android/arm":
 				codegenArg = "-shared"
 			case "darwin/amd64":
 			default:
@@ -360,7 +361,7 @@ func buildModeInit() {
 		ldBuildmode = "c-shared"
 	case "default":
 		switch platform {
-		case "android/arm":
+		case "android/arm", "android/amd64":
 			codegenArg = "-shared"
 			ldBuildmode = "pie"
 		default:
@@ -374,7 +375,7 @@ func buildModeInit() {
 			fatalf("-buildmode=pie not supported by gccgo")
 		} else {
 			switch platform {
-			case "android/arm", "linux/amd64":
+			case "android/arm", "linux/amd64", "android/amd64":
 				codegenArg = "-shared"
 			default:
 				fatalf("-buildmode=pie not supported on %s\n", platform)
@@ -387,7 +388,8 @@ func buildModeInit() {
 			codegenArg = "-fPIC"
 		} else {
 			switch platform {
-			case "linux/amd64":
+			case "linux/386", "linux/amd64", "linux/arm", "linux/arm64":
+				buildAsmflags = append(buildAsmflags, "-D=GOBUILDMODE_shared=1")
 			default:
 				fatalf("-buildmode=shared not supported on %s\n", platform)
 			}
@@ -404,9 +406,11 @@ func buildModeInit() {
 		if gccgo {
 			codegenArg = "-fPIC"
 		} else {
-			if platform != "linux/amd64" {
-				fmt.Fprintf(os.Stderr, "go %s: -linkshared is only supported on linux/amd64\n", flag.Args()[0])
-				os.Exit(2)
+			switch platform {
+			case "linux/386", "linux/amd64", "linux/arm", "linux/arm64":
+				buildAsmflags = append(buildAsmflags, "-D=GOBUILDMODE_shared=1")
+			default:
+				fatalf("-buildmode=shared not supported on %s\n", platform)
 			}
 			codegenArg = "-dynlink"
 			// TODO(mwhudson): remove -w when that gets fixed in linker.
@@ -978,7 +982,11 @@ func (b *builder) action1(mode buildMode, depMode buildMode, p *Package, looksha
 
 func (b *builder) libaction(libname string, pkgs []*Package, mode, depMode buildMode) *action {
 	a := &action{}
-	if mode == modeBuild {
+	switch mode {
+	default:
+		fatalf("unrecognized mode %v", mode)
+
+	case modeBuild:
 		a.f = (*builder).linkShared
 		a.target = filepath.Join(b.work, libname)
 		for _, p := range pkgs {
@@ -987,14 +995,15 @@ func (b *builder) libaction(libname string, pkgs []*Package, mode, depMode build
 			}
 			a.deps = append(a.deps, b.action(depMode, depMode, p))
 		}
-	} else if mode == modeInstall {
+
+	case modeInstall:
 		// Currently build mode shared forces external linking mode, and
-		// external linking mode forces an import of runtime/cgo. So if it
-		// was not passed on the command line and it is not present in
-		// another shared library, add it here.
-		seencgo := false
+		// external linking mode forces an import of runtime/cgo (and
+		// math on arm). So if it was not passed on the command line and
+		// it is not present in another shared library, add it here.
 		_, gccgo := buildToolchain.(gccgoToolchain)
 		if !gccgo {
+			seencgo := false
 			for _, p := range pkgs {
 				seencgo = seencgo || (p.Standard && p.ImportPath == "runtime/cgo")
 			}
@@ -1012,6 +1021,28 @@ func (b *builder) libaction(libname string, pkgs []*Package, mode, depMode build
 				if p.Shlib == "" || p.Shlib == libname {
 					pkgs = append([]*Package{}, pkgs...)
 					pkgs = append(pkgs, p)
+				}
+			}
+			if goarch == "arm" {
+				seenmath := false
+				for _, p := range pkgs {
+					seenmath = seenmath || (p.Standard && p.ImportPath == "math")
+				}
+				if !seenmath {
+					var stk importStack
+					p := loadPackage("math", &stk)
+					if p.Error != nil {
+						fatalf("load math: %v", p.Error)
+					}
+					computeStale(p)
+					// If math is in another shared library, then that's
+					// also the shared library that contains runtime, so
+					// something will depend on it and so math's staleness
+					// will be checked when processing that library.
+					if p.Shlib == "" || p.Shlib == libname {
+						pkgs = append([]*Package{}, pkgs...)
+						pkgs = append(pkgs, p)
+					}
 				}
 			}
 		}
@@ -1064,8 +1095,6 @@ func (b *builder) libaction(libname string, pkgs []*Package, mode, depMode build
 				shlibnameaction.deps = append(shlibnameaction.deps, buildAction)
 			}
 		}
-	} else {
-		fatalf("unregonized mode %v", mode)
 	}
 	return a
 }
@@ -3072,7 +3101,7 @@ func (b *builder) cgo(p *Package, cgoExe, obj string, pcCFLAGS, pcLDFLAGS, cgofi
 
 	linkobj = append(linkobj, p.SysoFiles...)
 	dynobj := obj + "_cgo_.o"
-	pie := goarch == "arm" && (goos == "linux" || goos == "android")
+	pie := (goarch == "arm" && goos == "linux") || goos == "android"
 	if pie { // we need to use -pie for Linux/ARM to get accurate imported sym
 		cgoLDFLAGS = append(cgoLDFLAGS, "-pie")
 	}

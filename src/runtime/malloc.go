@@ -388,7 +388,7 @@ func sysReserveHigh(n uintptr, reserved *bool) unsafe.Pointer {
 }
 
 func mHeap_SysAlloc(h *mheap, n uintptr) unsafe.Pointer {
-	if n > uintptr(h.arena_end)-uintptr(h.arena_used) {
+	if n > h.arena_end-h.arena_used {
 		// We are in 32-bit mode, maybe we didn't use all possible address space yet.
 		// Reserve some more space.
 		p_size := round(n+_PageSize, 256<<20)
@@ -420,7 +420,7 @@ func mHeap_SysAlloc(h *mheap, n uintptr) unsafe.Pointer {
 		}
 	}
 
-	if n <= uintptr(h.arena_end)-uintptr(h.arena_used) {
+	if n <= h.arena_end-h.arena_used {
 		// Keep taking from our reservation.
 		p := h.arena_used
 		sysMap(unsafe.Pointer(p), n, h.arena_reserved, &memstats.heap_sys)
@@ -438,7 +438,7 @@ func mHeap_SysAlloc(h *mheap, n uintptr) unsafe.Pointer {
 	}
 
 	// If using 64-bit, our reservation is all we have.
-	if uintptr(h.arena_end)-uintptr(h.arena_start) >= _MaxArena32 {
+	if h.arena_end-h.arena_start >= _MaxArena32 {
 		return nil
 	}
 
@@ -451,7 +451,7 @@ func mHeap_SysAlloc(h *mheap, n uintptr) unsafe.Pointer {
 		return nil
 	}
 
-	if p < h.arena_start || uintptr(p)+p_size-uintptr(h.arena_start) >= _MaxArena32 {
+	if p < h.arena_start || uintptr(p)+p_size-h.arena_start >= _MaxArena32 {
 		print("runtime: memory allocated by OS (", p, ") not in usable range [", hex(h.arena_start), ",", hex(h.arena_start+_MaxArena32), ")\n")
 		sysFree(unsafe.Pointer(p), p_size, &memstats.heap_sys)
 		return nil
@@ -459,7 +459,7 @@ func mHeap_SysAlloc(h *mheap, n uintptr) unsafe.Pointer {
 
 	p_end := p + p_size
 	p += -p & (_PageSize - 1)
-	if uintptr(p)+n > uintptr(h.arena_used) {
+	if uintptr(p)+n > h.arena_used {
 		mHeap_MapBits(h, p+n)
 		mHeap_MapSpans(h, p+n)
 		h.arena_used = p + n
@@ -615,7 +615,7 @@ func mallocgc(size uintptr, typ *_type, flags uint32) unsafe.Pointer {
 			(*[2]uint64)(x)[1] = 0
 			// See if we need to replace the existing tiny block with the new one
 			// based on amount of remaining free space.
-			if size < c.tinyoffset {
+			if size < c.tinyoffset || c.tiny == nil {
 				c.tiny = x
 				c.tinyoffset = size
 			}
@@ -826,6 +826,13 @@ func profilealloc(mp *m, x unsafe.Pointer, size uintptr) {
 // distributed random number and applying the cumulative distribution
 // function for an exponential.
 func nextSample() int32 {
+	if GOOS == "plan9" {
+		// Plan 9 doesn't support floating point in note handler.
+		if g := getg(); g == g.m.gsignal {
+			return nextSampleNoFP()
+		}
+	}
+
 	period := MemProfileRate
 
 	// make nextSample not overflow. Maximum possible step is
@@ -853,6 +860,20 @@ func nextSample() int32 {
 	}
 	const minusLog2 = -0.6931471805599453 // -ln(2)
 	return int32(qlog*(minusLog2*float64(period))) + 1
+}
+
+// nextSampleNoFP is similar to nextSample, but uses older,
+// simpler code to avoid floating point.
+func nextSampleNoFP() int32 {
+	// Set first allocation sample size.
+	rate := MemProfileRate
+	if rate > 0x3fffffff { // make 2*rate not overflow
+		rate = 0x3fffffff
+	}
+	if rate != 0 {
+		return int32(int(fastrand1()) % (2 * rate))
+	}
+	return 0
 }
 
 type persistentAlloc struct {

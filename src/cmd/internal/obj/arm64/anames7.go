@@ -55,6 +55,8 @@ var cnames7 = []string{
 	"UOREG64K",
 	"LOREG",
 	"ADDR",
+	"TLS_LE",
+	"TLS_IE",
 	"ROFF",
 	"GOK",
 	"TEXTSIZE",

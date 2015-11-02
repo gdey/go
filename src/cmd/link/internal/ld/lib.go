@@ -316,12 +316,12 @@ func (mode *BuildMode) Set(s string) error {
 		}
 		*mode = BuildmodeCArchive
 	case "c-shared":
-		if goarch != "amd64" && goarch != "arm" {
+		if goarch != "amd64" && goarch != "arm" && goarch != "arm64" {
 			return badmode()
 		}
 		*mode = BuildmodeCShared
 	case "shared":
-		if goos != "linux" || (goarch != "amd64" && goarch != "arm") {
+		if goos != "linux" || (goarch != "386" && goarch != "amd64" && goarch != "arm" && goarch != "arm64") {
 			return badmode()
 		}
 		*mode = BuildmodeShared
@@ -1031,14 +1031,6 @@ func hostlink() {
 			argv = append(argv, "-shared", "-Wl,-z,nodelete")
 		}
 	case BuildmodeShared:
-		// TODO(mwhudson): unless you do this, dynamic relocations fill
-		// out the findfunctab table and for some reason shared libraries
-		// and the executable both define a main function and putting the
-		// address of executable's main into the shared libraries
-		// findfunctab violates the assumptions of the runtime.  TBH, I
-		// think we may well end up wanting to use -Bsymbolic here
-		// anyway.
-		argv = append(argv, "-Wl,-Bsymbolic-functions")
 		if UseRelro() {
 			argv = append(argv, "-Wl,-z,relro")
 		}
@@ -1314,23 +1306,23 @@ func readnote(f *elf.File, name []byte, typ int32) ([]byte, error) {
 				if err == io.EOF {
 					break
 				}
-				return nil, fmt.Errorf("read namesize failed:", err)
+				return nil, fmt.Errorf("read namesize failed: %v", err)
 			}
 			err = binary.Read(r, f.ByteOrder, &descsize)
 			if err != nil {
-				return nil, fmt.Errorf("read descsize failed:", err)
+				return nil, fmt.Errorf("read descsize failed: %v", err)
 			}
 			err = binary.Read(r, f.ByteOrder, &noteType)
 			if err != nil {
-				return nil, fmt.Errorf("read type failed:", err)
+				return nil, fmt.Errorf("read type failed: %v", err)
 			}
 			noteName, err := readwithpad(r, namesize)
 			if err != nil {
-				return nil, fmt.Errorf("read name failed:", err)
+				return nil, fmt.Errorf("read name failed: %v", err)
 			}
 			desc, err := readwithpad(r, descsize)
 			if err != nil {
-				return nil, fmt.Errorf("read desc failed:", err)
+				return nil, fmt.Errorf("read desc failed: %v", err)
 			}
 			if string(name) == string(noteName) && typ == noteType {
 				return desc, nil

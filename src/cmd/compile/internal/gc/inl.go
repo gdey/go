@@ -106,6 +106,11 @@ func caninl(fn *Node) {
 		Fatalf("caninl no nname %v", Nconv(fn, obj.FmtSign))
 	}
 
+	// If marked "go:noinline", don't inline
+	if fn.Func.Noinline {
+		return
+	}
+
 	// If fn has no body (is defined outside of Go), cannot inline it.
 	if fn.Nbody == nil {
 		return
@@ -345,7 +350,8 @@ func inlnode(np **Node) {
 	case ODEFER, OPROC:
 		switch n.Left.Op {
 		case OCALLFUNC, OCALLMETH:
-			n.Left.Etype = n.Op
+			// TODO(marvin): Fix Node.EType type union.
+			n.Left.Etype = EType(n.Op)
 		}
 		fallthrough
 
@@ -445,7 +451,8 @@ func inlnode(np **Node) {
 	// switch at the top of this function.
 	switch n.Op {
 	case OCALLFUNC, OCALLMETH:
-		if n.Etype == OPROC || n.Etype == ODEFER {
+		// TODO(marvin): Fix Node.EType type union.
+		if n.Etype == EType(OPROC) || n.Etype == EType(ODEFER) {
 			return
 		}
 	}

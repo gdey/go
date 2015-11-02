@@ -1180,7 +1180,8 @@ ok:
 				}
 			} else {
 				ot = dgostringptr(s, ot, "")
-				if t1.Type.Sym != nil && t1.Type.Sym.Pkg == builtinpkg {
+				if t1.Type.Sym != nil &&
+					(t1.Type.Sym.Pkg == builtinpkg || !exportname(t1.Type.Sym.Name)) {
 					ot = dgopkgpath(s, ot, localpkg)
 				} else {
 					ot = dgostringptr(s, ot, "")
@@ -1266,7 +1267,7 @@ func dumptypestructs() {
 	// another possible choice would be package main,
 	// but using runtime means fewer copies in .6 files.
 	if compiling_runtime != 0 {
-		for i := 1; i <= TBOOL; i++ {
+		for i := EType(1); i <= TBOOL; i++ {
 			dtypesym(Ptrto(Types[i]))
 		}
 		dtypesym(Ptrto(Types[TSTRING]))

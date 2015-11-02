@@ -51,7 +51,7 @@ func adddynrel(s *ld.LSym, r *ld.Reloc) {
 func elfreloc1(r *ld.Reloc, sectoff int64) int {
 	ld.Thearch.Vput(uint64(sectoff))
 
-	elfsym := r.Xsym.Elfsym
+	elfsym := r.Xsym.ElfsymForReloc()
 	switch r.Type {
 	default:
 		return -1
@@ -72,6 +72,15 @@ func elfreloc1(r *ld.Reloc, sectoff int64) int {
 		ld.Thearch.Vput(uint64(r.Xadd))
 		ld.Thearch.Vput(uint64(sectoff + 4))
 		ld.Thearch.Vput(ld.R_AARCH64_ADD_ABS_LO12_NC | uint64(elfsym)<<32)
+
+	case obj.R_ARM64_TLS_LE:
+		ld.Thearch.Vput(ld.R_AARCH64_TLSLE_MOVW_TPREL_G0 | uint64(elfsym)<<32)
+
+	case obj.R_ARM64_TLS_IE:
+		ld.Thearch.Vput(ld.R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21 | uint64(elfsym)<<32)
+		ld.Thearch.Vput(uint64(r.Xadd))
+		ld.Thearch.Vput(uint64(sectoff + 4))
+		ld.Thearch.Vput(ld.R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC | uint64(elfsym)<<32)
 
 	case obj.R_CALLARM64:
 		if r.Siz != 4 {
@@ -225,7 +234,9 @@ func archreloc(r *ld.Reloc, s *ld.LSym, val *int64) int {
 
 			return 0
 
-		case obj.R_CALLARM64:
+		case obj.R_CALLARM64,
+			obj.R_ARM64_TLS_LE,
+			obj.R_ARM64_TLS_IE:
 			r.Done = 0
 			r.Xsym = r.Sym
 			r.Xadd = r.Add
@@ -267,6 +278,20 @@ func archreloc(r *ld.Reloc, s *ld.LSym, val *int64) int {
 		} else {
 			*val = int64(o1)<<32 | int64(o0)
 		}
+		return 0
+
+	case obj.R_ARM64_TLS_LE:
+		r.Done = 0
+		if ld.HEADTYPE != obj.Hlinux {
+			ld.Diag("TLS reloc on unsupported OS %s", ld.Headstr(int(ld.HEADTYPE)))
+		}
+		// The TCB is two pointers. This is not documented anywhere, but is
+		// de facto part of the ABI.
+		v := r.Sym.Value + int64(2*ld.Thearch.Ptrsize)
+		if v < 0 || v >= 32678 {
+			ld.Diag("TLS offset out of range %d", v)
+		}
+		*val |= v << 5
 		return 0
 
 	case obj.R_CALLARM64:
